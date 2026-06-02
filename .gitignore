@@ -8,6 +8,18 @@ build/
 bin/
 lib/
 
+# Local Python environments
+venv/
+.venv/
+
+# Runtime configuration exports
+config/runtime_geometry.json
+
+# Generated visualization images, tests, and outputs
+*.png
+*.jpg
+*.jpeg
+
 # RAW DATA BLOCKS - NEVER COMMIT GIANT DATASETS TO GITHUB
 data/
 *.parquet
