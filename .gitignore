@@ -1,0 +1,16 @@
+# Prerequisites and local system artifacts
+.DS_Store
+__pycache__/
+*.pyc
+
+# Local binary build paths
+build/
+bin/
+lib/
+
+# RAW DATA BLOCKS - NEVER COMMIT GIANT DATASETS TO GITHUB
+data/
+*.parquet
+*.tfrecord
+*.tar
+*.gz
