@@ -1,0 +1,13 @@
+📋 Starting Side-by-Side Performance Profiling Harness...
+🏃 Running baseline loop-based method (10 passes)...
+⚙️ Pre-computing Look-Up Tables (Excluded from streaming metrics)...
+⚡ Running optimized cv::remap method (10 passes)...
+
+==========================================================
+📊 RESUME PERFORMANCE METRICS GENERATED SUCCESSFULLY
+==========================================================
+❌ Baseline Loop Processing Latency: 425.563 ms
+🚀 Optimized LUT Processing Latency: 3221.28 µs (3.22128 ms)
+📈 Total Throughput Acceleration:    132.11x FASTER
+==========================================================
+
