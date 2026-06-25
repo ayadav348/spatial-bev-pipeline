@@ -167,8 +167,9 @@ int main() {
     double true_v_x = 15.0;
     double true_v_y = 0.0;
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    // Fixed seed: keeps the verification drill output reproducible so the
+    // metrics documented in the README are deterministic across runs.
+    std::mt19937 gen(42);
     std::normal_distribution<double> noise(0.0, std::sqrt(meas_noise));
 
     std::cout << std::fixed << std::setprecision(2);
@@ -178,10 +179,11 @@ int main() {
     std::cout << "========================================================================\n";
 
     for (int step = 0; step < 20; ++step) {
-        double t = step * dt;
-
+        // Advance ground-truth kinematics, then label the row with the time
+        // that corresponds to the post-motion state (step+1 ticks elapsed).
         true_x += true_v_x * dt;
         true_y += true_v_y * dt;
+        double t = (step + 1) * dt;
 
         Eigen::Vector2d measurement;
         measurement << true_x + noise(gen), true_y + noise(gen);
@@ -212,7 +214,12 @@ int main() {
         }
     }
     std::cout << "========================================================================\n";
-    std::cout << "(* Asterisk indicates pure velocity-predicted estimations during a blind spot)\n" << std::endl;
+    std::cout << "(* Asterisk indicates pure velocity-predicted estimations during a blind spot)\n";
+
+    Eigen::Vector4d final_state = kf.getState();
+    std::cout << "Final velocity estimate: vx = " << final_state(2)
+              << " m/s, vy = " << final_state(3) << " m/s"
+              << " (true: vx = " << true_v_x << ", vy = " << true_v_y << ")\n" << std::endl;
 
     cv::imwrite("bev_grid_test.png", final_bev_map);
     return 0;

@@ -27,3 +27,18 @@ target_link_libraries(bev_warp PRIVATE
     ${OpenCV_LIBS}
     Eigen3::Eigen
 )
+
+# 5. Unit Tests (Kalman Filter) — no external framework, runs under CTest
+enable_testing()
+
+add_executable(test_kalman
+    tests/test_kalman.cpp
+    src/kalman_filter.cpp
+)
+target_include_directories(test_kalman PRIVATE
+    include
+    ${EIGEN3_INCLUDE_DIR}
+)
+target_link_libraries(test_kalman PRIVATE Eigen3::Eigen)
+
+add_test(NAME kalman_unit_tests COMMAND test_kalman)

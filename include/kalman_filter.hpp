@@ -20,5 +20,6 @@ public:
     void update(const Eigen::Vector2d& measurement, double meas_noise);
 
     Eigen::Vector4d getState() const;
+    Eigen::Matrix4d getCovariance() const;
     bool isInitialized() const;
 };

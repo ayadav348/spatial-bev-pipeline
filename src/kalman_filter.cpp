@@ -1,12 +1,11 @@
 #include "kalman_filter.hpp"
-#include <cmath>
 
 KalmanFilter4D::KalmanFilter4D() {
     F_.setIdentity();
     H_.setZero();
     H_(0, 0) = 1.0;
     H_(1, 1) = 1.0;
-    P_.setIdentity() * 10.0; // Initial state uncertainty bound
+    P_ = Eigen::Matrix4d::Identity() * 10.0; // Initial state uncertainty bound
 }
 
 void KalmanFilter4D::init(const Eigen::Vector2d& initial_pos) {
@@ -46,9 +45,15 @@ void KalmanFilter4D::update(const Eigen::Vector2d& measurement, double meas_nois
     Eigen::Matrix<double, 4, 2> K = P_ * H_.transpose() * S.inverse(); // Kalman Gain
 
     x_ = x_ + K * y;
+
+    // Joseph-form covariance update: guarantees P stays symmetric positive
+    // semi-definite under floating-point rounding errors.
+    // P = (I - KH) P (I - KH)^T + K R K^T
     Eigen::Matrix4d I = Eigen::Matrix4d::Identity();
-    P_ = (I - K * H_) * P_;
+    Eigen::Matrix4d IKH = I - K * H_;
+    P_ = IKH * P_ * IKH.transpose() + K * R_ * K.transpose();
 }
 
 Eigen::Vector4d KalmanFilter4D::getState() const { return x_; }
+Eigen::Matrix4d KalmanFilter4D::getCovariance() const { return P_; }
 bool KalmanFilter4D::isInitialized() const { return is_initialized_; }
