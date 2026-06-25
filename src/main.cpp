@@ -4,7 +4,10 @@
 #include <chrono>
 #include <vector>
 #include <numeric>
+#include <random>
+#include <iomanip>
 #include "config.hpp"
+#include "kalman_filter.hpp"
 
 // Global Look-Up Tables for the optimized method
 cv::Mat map_x, map_y;
@@ -90,10 +93,10 @@ void initialize_spatial_lut(const CameraConfig& cam, int bev_width, int bev_heig
 }
 
 // ============================================================================
-// MAIN RUNTIME PROFILER
+// MAIN RUNTIME & VERIFICATION PIPELINE
 // ============================================================================
 int main() {
-    std::cout << "📋 Starting Side-by-Side Performance Profiling Harness..." << std::endl;
+    std::cout << "📋 Starting Real-Time Spatial BEV Integration Pipeline..." << std::endl;
 
     CameraConfig cam = Config::load_runtime_geometry("config/runtime_geometry.json");
 
@@ -108,51 +111,108 @@ int main() {
     cv::Mat simulated_input_frame = cv::Mat::zeros(img_height, img_width, CV_8UC3);
     simulated_input_frame.setTo(cv::Vec3b(40, 30, 30)); // Dark background
 
-    const int ITERATIONS = 10;
-    std::vector<double> old_times_ms;
-    std::vector<double> new_times_us;
+    // ========================================================================
+    // [UNCOMMENT TO RE-RUN OLD SIDE-BY-SIDE PERFORMANCE PROFILING]
+    // ========================================================================
+    /*
+     *   const int ITERATIONS = 10;
+     *   std::vector<double> old_times_ms;
+     *   std::vector<double> new_times_us;
+     *
+     *   std::cout << "🏃 Running baseline loop-based method (" << ITERATIONS << " passes)..." << std::endl;
+     *   for (int i = 0; i < ITERATIONS; ++i) {
+     *       auto start = std::chrono::high_resolution_clock::now();
+     *       cv::Mat res = run_old_loop_projection(simulated_input_frame, cam, bev_width, bev_height, min_x, max_x, min_y, max_y);
+     *       auto end = std::chrono::high_resolution_clock::now();
+     *       double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
+     *       old_times_ms.push_back(elapsed_ms);
+}
+*/
 
-    // --- Benchmark Method 1 (Old Dynamic Execution) ---
-    std::cout << "🏃 Running baseline loop-based method (" << ITERATIONS << " passes)..." << std::endl;
-    for (int i = 0; i < ITERATIONS; ++i) {
-        auto start = std::chrono::high_resolution_clock::now();
-        cv::Mat res = run_old_loop_projection(simulated_input_frame, cam, bev_width, bev_height, min_x, max_x, min_y, max_y);
-        auto end = std::chrono::high_resolution_clock::now();
-
-        double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
-        old_times_ms.push_back(elapsed_ms);
-    }
-
-    // --- Benchmark Method 2 (New LUT-cached Execution) ---
-    std::cout << "⚙️ Pre-computing Look-Up Tables (Excluded from streaming metrics)..." << std::endl;
+    // --- Production Implementation: LUT Initialization ---
+    std::cout << "⚙️ Pre-computing Spatial Look-Up Tables..." << std::endl;
     initialize_spatial_lut(cam, bev_width, bev_height, min_x, max_x, min_y, max_y, img_width, img_height);
 
-    std::cout << "⚡ Running optimized cv::remap method (" << ITERATIONS << " passes)..." << std::endl;
+    // --- Production Implementation: Fast Real-Time Warping ---
+    std::cout << "⚡ Executing high-throughput spatial remap..." << std::endl;
     cv::Mat final_bev_map;
-    for (int i = 0; i < ITERATIONS; ++i) {
-        auto start = std::chrono::high_resolution_clock::now();
-        cv::remap(simulated_input_frame, final_bev_map, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0,0,0));
-        auto end = std::chrono::high_resolution_clock::now();
+    auto start_remap = std::chrono::high_resolution_clock::now();
+    cv::remap(simulated_input_frame, final_bev_map, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0,0,0));
+    auto end_remap = std::chrono::high_resolution_clock::now();
+    double remap_us = std::chrono::duration<double, std::micro>(end_remap - start_remap).count();
+    std::cout << "🚀 Latency achieved: " << remap_us << " µs" << std::endl;
 
-        double elapsed_us = std::chrono::duration<double, std::micro>(end - start).count();
-        new_times_us.push_back(elapsed_us);
+    /*
+     *   // [UNCOMMENT TO CALCULATE SPEEDUP METRICS WITH ACCUMULATORS]
+     *   double avg_old_ms = std::accumulate(old_times_ms.begin(), old_times_ms.end(), 0.0) / ITERATIONS;
+     *   double avg_new_us = std::accumulate(new_times_us.begin(), new_times_us.end(), 0.0) / ITERATIONS;
+     *   double avg_new_ms = avg_new_us / 1000.0;
+     *   double speedup_factor = avg_old_ms / avg_new_ms;
+     *   // ... Output printing statements ...
+     */
+
+    // ========================================================================
+    // PHASE 4 INTEGRATION: TEMPORAL STATE ESTIMATION VERIFICATION DRILL
+    // ========================================================================
+    std::cout << "\n🔮 Initializing Temporal Verification (4D Kalman Filter)..." << std::endl;
+    KalmanFilter4D kf;
+
+    double dt = 0.1;             // 10 Hz simulated step frequency
+    double process_noise = 4.0; // Model dynamics covariance
+    double meas_noise = 0.4;     // Simulated detector variance bounds
+
+    // Physical vehicle kinematics trajectory simulation passed down to Ego Center
+    double true_x = 5.0;
+    double true_y = 2.0;
+    double true_v_x = 15.0;
+    double true_v_y = 0.0;
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::normal_distribution<double> noise(0.0, std::sqrt(meas_noise));
+
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "========================================================================\n";
+    std::cout << " TIME   │     TRUE POSITION     │    NOISY MEASUREMENT  │    KALMAN FILTER      \n";
+    std::cout << " (s)    │   X (m)   │   Y (m)   │   X (m)   │   Y (m)   │   X (m)   │   Y (m)   \n";
+    std::cout << "========================================================================\n";
+
+    for (int step = 0; step < 20; ++step) {
+        double t = step * dt;
+
+        true_x += true_v_x * dt;
+        true_y += true_v_y * dt;
+
+        Eigen::Vector2d measurement;
+        measurement << true_x + noise(gen), true_y + noise(gen);
+
+        if (!kf.isInitialized()) {
+            kf.init(measurement);
+        } else {
+            kf.predict(dt, process_noise);
+
+            // Simulate visual dropout / sensor occlusion between frames 10 and 14
+            if (step >= 10 && step <= 14) {
+                // Skip update phase - rely entirely on motion prediction kinematics!
+            } else {
+                kf.update(measurement, meas_noise);
+            }
+        }
+
+        Eigen::Vector4d state = kf.getState();
+
+        std::cout << std::setw(6) << t << "  │ "
+        << std::setw(9) << true_x << " │ " << std::setw(9) << true_y << " │ "
+        << std::setw(9) << measurement(0) << " │ " << std::setw(9) << measurement(1) << " │ ";
+
+        if (step >= 10 && step <= 14) {
+            std::cout << std::setw(9) << state(0) << "*│ " << std::setw(9) << state(1) << "* [OCCLUSION]\n";
+        } else {
+            std::cout << std::setw(9) << state(0) << " │ " << std::setw(9) << state(1) << "\n";
+        }
     }
-
-    // Compute statistical averages
-    double avg_old_ms = std::accumulate(old_times_ms.begin(), old_times_ms.end(), 0.0) / ITERATIONS;
-    double avg_new_us = std::accumulate(new_times_us.begin(), new_times_us.end(), 0.0) / ITERATIONS;
-    double avg_new_ms = avg_new_us / 1000.0; // convert to ms for direct comparison
-
-    double speedup_factor = avg_old_ms / avg_new_ms;
-
-    // --- REPORT THE RESUME METRICS ---
-    std::cout << "\n==========================================================" << std::endl;
-    std::cout << "📊 RESUME PERFORMANCE METRICS GENERATED SUCCESSFULLY" << std::endl;
-    std::cout << "==========================================================" << std::endl;
-    std::cout << "❌ Baseline Loop Processing Latency: " << avg_old_ms << " ms" << std::endl;
-    std::cout << "🚀 Optimized LUT Processing Latency: " << avg_new_us << " µs (" << avg_new_ms << " ms)" << std::endl;
-    std::cout << "📈 Total Throughput Acceleration:    " << speedup_factor << "x FASTER" << std::endl;
-    std::cout << "==========================================================\n" << std::endl;
+    std::cout << "========================================================================\n";
+    std::cout << "(* Asterisk indicates pure velocity-predicted estimations during a blind spot)\n" << std::endl;
 
     cv::imwrite("bev_grid_test.png", final_bev_map);
     return 0;
