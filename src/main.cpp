@@ -28,8 +28,10 @@ cv::Mat run_old_loop_projection(const cv::Mat& src_frame, const CameraConfig& ca
     for (int v_bev = 0; v_bev < bev_height; ++v_bev) {
         for (int u_bev = 0; u_bev < bev_width; ++u_bev) {
 
-            double X_world = max_x - (static_cast<double>(v_bev) / bev_height) * (max_x - min_x);
-            double Y_world = min_y + (static_cast<double>(u_bev) / bev_width) * (max_y - min_y);
+            // Corrected axis mapping (mirrors initialize_spatial_lut):
+            // X forward (top of BEV = max_x, bottom = min_x), Y lateral (left=min_y, right=max_y)
+            double X_world = min_x + (static_cast<double>(bev_height - 1 - v_bev) / (bev_height - 1)) * (max_x - min_x);
+            double Y_world = min_y + (static_cast<double>(u_bev) / (bev_width - 1)) * (max_y - min_y);
             double Z_world = 0.0;
 
             Eigen::Vector3d P_world(X_world, Y_world, Z_world);
@@ -62,30 +64,54 @@ void initialize_spatial_lut(const CameraConfig& cam, int bev_width, int bev_heig
     map_x.create(bev_height, bev_width, CV_32FC1);
     map_y.create(bev_height, bev_width, CV_32FC1);
 
+    // E_cam2veh transforms camera-frame points to vehicle frame.
+    // Inverting yields E_veh2cam, needed to project world (vehicle-frame) points
+    // into camera pixel coordinates: P_cam = R * P_veh + T
     Eigen::Matrix4d E_veh2cam = cam.E_cam2veh.inverse();
     Eigen::Matrix3d R = E_veh2cam.block<3,3>(0,0);
     Eigen::Vector3d T = E_veh2cam.block<3,1>(0,3);
 
+    // Measured from source frame (3840x2160 dashcam):
+    //   horizon (sky/road boundary) at ~40% from top  => reject pixels above this
+    //   hood top                    at ~81% from top  => reject pixels below this
+    const int horizon_v = static_cast<int>(img_rows * 0.40);
+    const int hood_v    = static_cast<int>(img_rows * 0.81);
+
     for (int v_bev = 0; v_bev < bev_height; ++v_bev) {
         for (int u_bev = 0; u_bev < bev_width; ++u_bev) {
-            double X_world = max_x - (static_cast<double>(v_bev) / bev_height) * (max_x - min_x);
-            double Y_world = min_y + (static_cast<double>(u_bev) / bev_width) * (max_y - min_y);
+
+            // BEV pixel (u_bev, v_bev) → ground-plane world point (ISO 8855 / Waymo axes):
+            //   X  — forward longitudinal distance (increases toward top of BEV image)
+            //   Y  — lateral offset   (left is negative, right is positive)
+            //   Z  — zero (flat ground plane)
+            //
+            // v_bev=0           → top of BEV image    → farthest ahead  (max_x)
+            // v_bev=bev_height-1 → bottom of BEV image → closest ahead  (min_x)
+            double X_world = min_x + (static_cast<double>(bev_height - 1 - v_bev) / (bev_height - 1)) * (max_x - min_x);
+            // u_bev=0           → left  of BEV image → min_y (most negative lateral)
+            // u_bev=bev_width-1 → right of BEV image → max_y (most positive lateral)
+            double Y_world = min_y + (static_cast<double>(u_bev) / (bev_width - 1)) * (max_y - min_y);
             double Z_world = 0.0;
 
+            // Project world point through extrinsic + intrinsic pipeline
             Eigen::Vector3d P_world(X_world, Y_world, Z_world);
             Eigen::Vector3d P_cam = R * P_world + T;
 
+            // Waymo camera convention: X is the optical axis (depth).
+            // Points behind the camera (X <= 0) are physically invalid.
             if (P_cam.x() > 0.1) {
                 Eigen::Vector2i pixel = SpatialMath::project_3d_to_2d(
                     P_cam, cam.fx, cam.fy, cam.cx, cam.cy, cam.type
                 );
 
-                if (pixel.x() >= 0 && pixel.x() < img_cols && pixel.y() >= 0 && pixel.y() < img_rows) {
+                if (pixel.x() >= 0 && pixel.x() < img_cols &&
+                    pixel.y() >= horizon_v && pixel.y() < hood_v) {
                     map_x.at<float>(v_bev, u_bev) = static_cast<float>(pixel.x());
                     map_y.at<float>(v_bev, u_bev) = static_cast<float>(pixel.y());
                     continue;
                 }
             }
+            // Sentinel: cv::remap fills these with BORDER_CONSTANT black
             map_x.at<float>(v_bev, u_bev) = -1.0f;
             map_y.at<float>(v_bev, u_bev) = -1.0f;
         }
@@ -102,14 +128,32 @@ int main() {
 
     int bev_width = 400;
     int bev_height = 500;
-    double min_x = 5.0,  max_x = 50.0;
-    double min_y = -20.0, max_y = 20.0;
-    int img_width = 1920;
-    int img_height = 1280;
+    // Ground plane range in vehicle frame (Waymo: X=forward, Y=lateral).
+    // Dashcam at 1.3m height, ~5deg pitch: usable road visible from ~5m to ~30m ahead.
+    double min_x = 10.0, max_x = 30.0;
+    double min_y = -3.0, max_y = 9.0;
 
-    // Generate simulated camera input frame
-    cv::Mat simulated_input_frame = cv::Mat::zeros(img_height, img_width, CV_8UC3);
-    simulated_input_frame.setTo(cv::Vec3b(40, 30, 30)); // Dark background
+    // Open video capture stream from the dashcam MP4 file
+    std::string video_path = "data/video/2607201822F_364043.MP4";
+    cv::VideoCapture cap(video_path);
+
+    if (!cap.isOpened()) {
+        std::cerr << "❌ Error: Could not open video file at " << video_path << std::endl;
+        return -1;
+    }
+
+    int img_width  = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    int img_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+
+    /*
+    // ========================================================================
+    // [OLD SYNTHETIC FRAME DATA SETUP]
+    // ========================================================================
+    // int img_width = 1920;
+    // int img_height = 1280;
+    // cv::Mat simulated_input_frame = cv::Mat::zeros(img_height, img_width, CV_8UC3);
+    // simulated_input_frame.setTo(cv::Vec3b(40, 30, 30)); // Dark background
+    */
 
     // ========================================================================
     // [UNCOMMENT TO RE-RUN OLD SIDE-BY-SIDE PERFORMANCE PROFILING]
@@ -126,21 +170,54 @@ int main() {
      *       auto end = std::chrono::high_resolution_clock::now();
      *       double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
      *       old_times_ms.push_back(elapsed_ms);
-}
-*/
+     *   }
+     */
 
     // --- Production Implementation: LUT Initialization ---
     std::cout << "⚙️ Pre-computing Spatial Look-Up Tables..." << std::endl;
     initialize_spatial_lut(cam, bev_width, bev_height, min_x, max_x, min_y, max_y, img_width, img_height);
 
-    // --- Production Implementation: Fast Real-Time Warping ---
-    std::cout << "⚡ Executing high-throughput spatial remap..." << std::endl;
-    cv::Mat final_bev_map;
-    auto start_remap = std::chrono::high_resolution_clock::now();
-    cv::remap(simulated_input_frame, final_bev_map, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0,0,0));
-    auto end_remap = std::chrono::high_resolution_clock::now();
-    double remap_us = std::chrono::duration<double, std::micro>(end_remap - start_remap).count();
-    std::cout << "🚀 Latency achieved: " << remap_us << " µs" << std::endl;
+    // --- Production Implementation: Real-Time Stream Processing ---
+    std::cout << "⚡ Executing high-throughput spatial remap video stream..." << std::endl;
+    
+    cv::Mat frame, final_bev_map;
+    cv::namedWindow("Real-Time Spatial BEV Stream", cv::WINDOW_NORMAL);
+    cv::resizeWindow("Real-Time Spatial BEV Stream", 1280, 720);
+
+    /*
+    // Single static synthetic execution (replaced by VideoCapture stream loop below)
+    // auto start_remap = std::chrono::high_resolution_clock::now();
+    // cv::remap(simulated_input_frame, final_bev_map, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0,0,0));
+    // auto end_remap = std::chrono::high_resolution_clock::now();
+    // double remap_us = std::chrono::duration<double, std::micro>(end_remap - start_remap).count();
+    // std::cout << "🚀 Latency achieved: " << remap_us << " µs" << std::endl;
+    */
+
+    while (cap.read(frame)) {
+        if (frame.empty()) {
+            break;
+        }
+
+        auto start_remap = std::chrono::high_resolution_clock::now();
+        cv::remap(frame, final_bev_map, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar(0,0,0));
+        auto end_remap = std::chrono::high_resolution_clock::now();
+
+        double remap_us = std::chrono::duration<double, std::micro>(end_remap - start_remap).count();
+
+        // Render latency telemetry directly onto output frame
+        std::string latency_text = "Latency: " + std::to_string(remap_us) + " us";
+        cv::putText(final_bev_map, latency_text, cv::Point(15, 30),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 0), 2);
+
+        cv::imshow("Real-Time Spatial BEV Stream", final_bev_map);
+
+        if (cv::waitKey(1) == 'q') {
+            std::cout << "⏹️ Video playback stopped by user." << std::endl;
+            break;
+        }
+    }
+
+    cap.release();
 
     /*
      *   // [UNCOMMENT TO CALCULATE SPEEDUP METRICS WITH ACCUMULATORS]
@@ -174,8 +251,8 @@ int main() {
 
     std::cout << std::fixed << std::setprecision(2);
     std::cout << "========================================================================\n";
-    std::cout << " TIME   │     TRUE POSITION     │    NOISY MEASUREMENT  │    KALMAN FILTER      \n";
-    std::cout << " (s)    │   X (m)   │   Y (m)   │   X (m)   │   Y (m)   │   X (m)   │   Y (m)   \n";
+    std::cout << " TIME    │     TRUE POSITION     │    NOISY MEASUREMENT  │    KALMAN FILTER      \n";
+    std::cout << " (s)     │    X (m)   │   Y (m)   │    X (m)   │   Y (m)   │    X (m)   │   Y (m)   \n";
     std::cout << "========================================================================\n";
 
     for (int step = 0; step < 20; ++step) {
@@ -221,6 +298,8 @@ int main() {
               << " m/s, vy = " << final_state(3) << " m/s"
               << " (true: vx = " << true_v_x << ", vy = " << true_v_y << ")\n" << std::endl;
 
-    cv::imwrite("bev_grid_test.png", final_bev_map);
+    if (!final_bev_map.empty()) {
+        cv::imwrite("bev_grid_test.png", final_bev_map);
+    }
     return 0;
 }
