@@ -13,7 +13,7 @@
 cv::Mat map_x, map_y;
 
 // ============================================================================
-// METHOD 1: YOUR OLD METHOD (Looping through every pixel & calculating math)
+// METHOD 1: OLD METHOD (Looping through every pixel & calculating math)
 // ============================================================================
 cv::Mat run_old_loop_projection(const cv::Mat& src_frame, const CameraConfig& cam,
                                 int bev_width, int bev_height,
@@ -55,7 +55,7 @@ cv::Mat run_old_loop_projection(const cv::Mat& src_frame, const CameraConfig& ca
 }
 
 // ============================================================================
-// METHOD 2: YOUR NEW METHOD (Pre-computed Lookup Table Setup)
+// METHOD 2: NEW METHOD (Pre-computed Lookup Table Setup)
 // ============================================================================
 void initialize_spatial_lut(const CameraConfig& cam, int bev_width, int bev_height,
                             double min_x, double max_x, double min_y, double max_y,
