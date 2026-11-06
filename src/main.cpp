@@ -182,7 +182,7 @@ int main() {
     
     cv::Mat frame, final_bev_map;
     cv::namedWindow("Real-Time Spatial BEV Stream", cv::WINDOW_NORMAL);
-    cv::resizeWindow("Real-Time Spatial BEV Stream", 1280, 720);
+    cv::resizeWindow("Real-Time Spatial BEV Stream", 1600, 720);
 
     /*
     // Single static synthetic execution (replaced by VideoCapture stream loop below)
@@ -192,6 +192,10 @@ int main() {
     // double remap_us = std::chrono::duration<double, std::micro>(end_remap - start_remap).count();
     // std::cout << "🚀 Latency achieved: " << remap_us << " µs" << std::endl;
     */
+
+    constexpr int DISPLAY_HEIGHT = 720;
+    constexpr int ORIG_WIDTH_RATIO = 1;  // original frame width proportion
+    constexpr int BEV_WIDTH_RATIO  = 4;  // BEV map width proportion (relative to orig)
 
     while (cap.read(frame)) {
         if (frame.empty()) {
@@ -204,12 +208,32 @@ int main() {
 
         double remap_us = std::chrono::duration<double, std::micro>(end_remap - start_remap).count();
 
-        // Render latency telemetry directly onto output frame
+        // Render latency telemetry directly onto BEV output frame
         std::string latency_text = "Latency: " + std::to_string(remap_us) + " us";
         cv::putText(final_bev_map, latency_text, cv::Point(15, 30),
                     cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 0), 2);
 
-        cv::imshow("Real-Time Spatial BEV Stream", final_bev_map);
+        // --- Side-by-side comparison: original frame vs BEV map ---
+        // Resize original frame to match display height while keeping aspect ratio
+        double orig_scale = static_cast<double>(DISPLAY_HEIGHT) / frame.rows;
+        int orig_display_w = static_cast<int>(frame.cols * orig_scale);
+        int orig_display_h = DISPLAY_HEIGHT;
+        cv::Mat frame_resized;
+        cv::resize(frame, frame_resized, cv::Size(orig_display_w, orig_display_h), 0, 0, cv::INTER_AREA);
+
+        // Resize BEV map to match display height while keeping aspect ratio
+        double bev_scale = static_cast<double>(DISPLAY_HEIGHT) / final_bev_map.rows;
+        int bev_display_w = static_cast<int>(final_bev_map.cols * bev_scale);
+        int bev_display_h = DISPLAY_HEIGHT;
+        cv::Mat bev_display;
+        cv::resize(final_bev_map, bev_display, cv::Size(bev_display_w, bev_display_h), 0, 0, cv::INTER_LINEAR);
+
+        // Concatenate original (left) and BEV (right) side-by-side
+        cv::Mat combined;
+        cv::hconcat(frame_resized, bev_display, combined);
+
+        // Display the combined view
+        cv::imshow("Real-Time Spatial BEV Stream", combined);
 
         if (cv::waitKey(1) == 'q') {
             std::cout << "⏹️ Video playback stopped by user." << std::endl;
